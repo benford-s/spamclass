@@ -1,0 +1,305 @@
+---
+title: "Spam vs. Ham Text Messages"
+author: "Sam Benford"
+date: "10/19/2020"
+output: 
+  html_document:
+    code_folding: show
+    toc: true
+    toc_depth: 3
+---
+
+```{r Setup, results='hide'}
+
+library(tidyverse)
+library(tm)
+library(wordcloud)
+
+```
+
+
+# Problem 1
+## Collect and Import Raw Data
+```{r}
+sms_raw <- read_csv("~/Library/Mobile Documents/com~apple~CloudDocs/College/DA5030/Practices/Practice_4/da5030.spammsgdataset.csv")
+```
+## Explore and Prepaire the Data
+
+### Cleaning the Dataset
+
+#### Taking a look at the dataset
+```{r}
+str(sms_raw)
+```
+Here, we can see that the dataset is made up of 2 columns of characters and is 5574 long. The "type"" column contains the classification (either ham or spam) and the "text" column contains the raw message data.
+
+#### Converting the types to factors
+```{r}
+
+# convert the type column into factors and inspect
+sms_raw$type <- factor(sms_raw$type)
+str(sms_raw$type)
+table(sms_raw$type)
+```
+Here, we have converted the type column into a factor since it will be treated as a categorical variable. We can then see that we have 4827 ham and 747 spam classifications in the dataset.
+
+#### Creating the corpus
+```{r}
+
+# create the corpus from the text column
+sms_corpus <- VCorpus(VectorSource(sms_raw$text))
+
+print(sms_corpus)
+
+
+```
+Here, we've created a corpus using the Vcorpus() function to store it in memory and the VectorSource() to read the vector we are storing. We've then printed the corpus to inspect its contents and can see that we've created 5574 documents (referring to the 5574 text messages).
+
+#### Inspecting the corpus
+```{r}
+
+inspect(sms_corpus[1:2])
+
+```
+Here, we take a look at the information on the first two elements of the text column that have 111 and 29 characters respectively.
+
+#### Looking at the actual text
+```{r}
+
+as.character(sms_corpus[[1]])
+```
+Here, we take a look at the actual raw text that is contained in the first element of the corpus.
+
+#### Looking at multiple elements
+```{r}
+lapply(sms_corpus[1:2], as.character)
+```
+Here, we look at the raw text of the first two elements.
+
+#### Coverting to lower case
+```{r}
+sms_corpus_clean <- tm_map(sms_corpus, content_transformer(tolower))
+
+as.character(sms_corpus[[1]])
+as.character(sms_corpus_clean[[1]])
+```
+Here, we use the tolower function to change all of the text in the corpus to lower case for easier and cleaner processing. We use the content_transformer to signify the tolower function as a transformation to the whole corpus.
+
+We also compare the first elements of the original and newly cleaned corpuses to confirm the result of the tolower function.
+
+
+#### Getting rid of numbers, stopwords, and punctuation
+```{r}
+sms_corpus_clean <- tm_map(sms_corpus_clean, removeNumbers)
+sms_corpus_clean <- tm_map(sms_corpus_clean,removeWords, stopwords())
+sms_corpus_clean <- tm_map(sms_corpus_clean, removePunctuation)
+
+```
+Here we remove all unnecessary portions of text which will not help us in our analysis. This includes number values, stop words, and punctuation. These all just add clutter to the text and get in the way of discerning the meaning of it. 
+
+#### Reducing text to its stem words using wordStem()
+```{r}
+sms_corpus_clean <- tm_map(sms_corpus_clean, stemDocument)
+```
+We reduce the conjugation in words to the stem word in order to further remove variabilty in the data. This will also help us work with text since the meaning of words is the focus, not their conjugation. 
+
+#### Removing whitespace using stripWhitespace()
+```{r}
+sms_corpus_clean <- tm_map(sms_corpus_clean, stripWhitespace)
+```
+This function removes the whitespaces which was left behind by our previous text cleaning operations.
+
+### Prepairing the Dataset
+
+#### Creating the Document Term Matrix
+```{r}
+sms_dtm <- DocumentTermMatrix(sms_corpus_clean)
+```
+This creates a matrix which stores the count of each unique word in the entire dataset in each row of the dataset (count of words by message number).
+
+#### Creating Training and Testing Datasets
+```{r}
+
+# calculate the integer of rows which is 75% and 25% of the dataset 
+row_75 <- round(nrow(sms_raw)* 0.75,0) 
+row_25 <- nrow(sms_raw) - row_75
+
+# create testing and training data from dtm
+sms_dtm_train <- sms_dtm[1:row_75, ]
+sms_dtm_test  <- sms_dtm[row_25:nrow(sms_raw), ]
+
+# create the label variables for testing and training data
+sms_train_labels <- sms_raw[1:row_75, ]$type
+sms_test_labels  <- sms_raw[row_25:nrow(sms_raw), ]$type
+```
+We've now created a testing and training dataset from the dtm values. We've also created variables which store the corresponding labels for the testing and training datasets. The split using is 75% training and 25% testing.
+
+#### Confirming the correct proportions ham and spam data
+```{r}
+prop.table(table(sms_train_labels))
+prop.table(table(sms_test_labels))
+```
+We can see that the proportion of ham to spam classification in both testing and traning data is about the same. Therefore we can assume they were divided about evenly and move forward with the analysis.
+
+### Visualizing the Text Data
+
+#### Creating a wordcloud of the whole dataset
+```{r}
+wordcloud(sms_corpus_clean, min.freq = 50, random.order = FALSE)
+```
+
+
+
+#### Comparing Ham and Spam wordclouds
+```{r}
+spam <- subset(sms_raw, type == "spam")
+ham <- subset(sms_raw, type == "ham")
+
+wordcloud(spam$text, max.words = 40, scale = c(3, 0.5))
+wordcloud(ham$text, max.words = 40, scale = c(3, 0.5))
+
+```
+
+Here, we've made a word cloud for both the ham and spam text files. We can clearly see that the spam wordcloud has words that sound "shady" like: 
+free, claim, call, guaranteed, awarded, etc... This is a very helpful step in understanding how the difference in ham and spam messages will be determined because we can see the different sentiments with the words included in a message.
+
+#### Creating Indicator features for frequent words
+
+```{r}
+
+# create a list with words used at least 5 times
+sms_freq_words <- findFreqTerms(sms_dtm_train, 5)
+
+# filter the dtm to include only words that occur at least 5 times
+sms_dtm_freq_train<- sms_dtm_train[ , sms_freq_words]
+sms_dtm_freq_test <- sms_dtm_test[ , sms_freq_words]
+
+```
+Here, we have trimmed our train and test sets by only including words which appear at least 5 times. This further reduces words that are not going to impact our classification because they do not appear frequently enought to create a patter.
+
+#### Creating the Convert Function
+```{r}
+convert_counts <- function(x) {
+    x <- ifelse(x > 0, "Yes", "No")
+}
+
+sms_train <- apply(sms_dtm_freq_train, MARGIN = 2, convert_counts)
+sms_test <- apply(sms_dtm_freq_test, MARGIN = 2, convert_counts)
+```
+Here, we create a function which returns "Yes" if a count is over 0 and "No" if it does not. This is done because Naive Bayes works based on categorical variables so we are turning word counts into simply "Yes" if they appear and "No" if they don't.
+
+
+## Training the Model
+```{r}
+
+library(e1071)
+sms_classifier <- naiveBayes(sms_train, sms_train_labels)
+
+```
+
+In this step, we use the naiveBayes() function from the e1071 package to train a classifier object that will be used to make predictions. We use the sms_train object and its corresponding sms_train_labels object to train the model.
+
+## Testing and Evaluating the Model
+
+### Testing the model
+```{r}
+
+sms_test_pred <- predict(sms_classifier, sms_test)
+
+```
+Here, we actually implement the Naive Bayes classifier on the testing dataset we created earlier.
+
+
+### Evaluating the model
+
+```{r}
+
+library(gmodels)
+CrossTable(sms_test_pred, sms_test_labels,
+    prop.chisq = FALSE, prop.t = FALSE,
+    dnn = c('predicted', 'actual'))
+
+```
+
+Here, we create a confusion matrix of the model. WE can see that our model correctly classifies about 98.3% of the messages and only about 1.7% are incorrectly classified. We correctly identified 3622 ham messages as ham and 488 spam messages as spam. We also let 57 spam messages slip through as ham. The most concerning classification in this case would be filtering out regular messages as spam which are actually not spam. However, we only had 14 ham messages incorrectly classified as spam. These 14 are problematic because someone could miss a real, important message if it was placed in a spam folder.
+
+## Improving Model Performance
+
+#### Set laplace = 1
+```{r}
+sms_classifier2 <- naiveBayes(sms_train, sms_train_labels, laplace = 1)
+```
+Here, we set laplace to 1 in our improved Naive Bayes Classifier. This is done in order to allow for words that only appear in one category or the other to have less of an impact on classification. It should balance the model and improve its performance.
+
+#### Re-run the model and evaluate
+```{r}
+sms_test_pred2 <- predict(sms_classifier2, sms_test)
+CrossTable(sms_test_pred2, sms_test_labels, prop.chisq = FALSE, prop.t = FALSE, prop.r = FALSE, dnn = c('predicted', 'actual'))
+```
+Our model edit successfully reduced the number of misclassified ham emails but increased the number of misclassified spam emails. This was actually the goal because in this scenario, we would rather have spam messages "leak" through the filter than have non-spam be filtered out. Our correctly classified percentage remained basically the same so the transformation can be classified as an improvement. 
+
+
+# Problem 2
+
+### Install Packages and Load Libraries
+```{r}
+#install.packages("klaR")
+library(klaR)
+library(caret)
+
+```
+In this step, we install and load the klaR package which contains a Naive Bayes Classifier function.
+
+
+### Inspect Dataset
+```{r}
+
+data(iris)
+
+nrow(iris)
+summary(iris)
+head(iris)
+```
+In this step, we inspect the iris dataset for the number of rows, types of values and their distribution, and look at the first 6 rows.
+
+
+### Splitting Sequence
+```{r}
+testidx <- which(1:length(iris[, 1]) %% 5 == 0)
+testidx
+```
+In this step, we create a vector which is a sequence of numbers from 1 to the number of rows in the dataset by 5. This will be used to split the data into testing and training.
+
+### Splitting the Data into Testing and Training
+```{r}
+# separate into training and testing datasets
+iristrain <- iris[-testidx,]
+iristest <- iris[testidx,]
+
+```
+Here, we split the data into testing and training datasets using the testidx vector. The rows with the row indeces that match the testidx values go in the test set and the rest go into the training set. 
+
+### Create and Train the Naive Bayes Classifier Model
+```{r}
+# apply Naive Bayes
+nbmodel <- NaiveBayes(Species~., data=iristrain)
+```
+Here, we create the classifier model, nbmodel. We specify the column that will be predicted, Species, and say that we will use all other columns to predict that column. We also specfiy that we are using the iristrain dataset as our input data to create and train the model.
+
+
+```{r}
+# check the accuracy
+prediction <- predict(nbmodel, iristest[,-5])
+table(prediction$class, iristest[,5])
+confusionMatrix(table(prediction$class, iristest[,5]))
+```
+
+In this step, we use the Naive Bayes model we built in the previous step to make predictions on the testing dataset. We remove the Species column (which is the fifth column) when we pass it to the predict function along with our model. We then create a table which compares the predictions to the output variable to see how well our model predicts the categories of species. The prediction is on the left and the actual species is listed at the top of the table
+
+We can see that all 10 setosa and versicolor species were identified correctly by the model. Also, 8 virginica plants were classified correctly as well. However, 2 virginica plants were classified incorrectly as versicolor plants. Overall, the accuracy is about 93%.
+
+This process was much different than the textbook example because we were dealing with an already numerical dataset so there was much less preprocessing required. The practice also highlights how big of a role data preprocessing plays in data analysis.
+
+
+
+
